@@ -1,0 +1,82 @@
+# Head 节点：配置免密 SSH，启动 sshd + nv-hostengine；可选跑 mndiag（L20 等不支持 mndiag 时保持 RUN_MNDIAG=false）
+# 需配合 ssh-secret、worker deployment 和 services 使用
+# L20 用法：保持 RUN_MNDIAG=false，Pod 常驻，kubectl exec 进 head 测试免密与单机命令
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dcgm-mndiag-head
+  namespace: dcgm-mndiag
+  labels:
+    app: dcgm-mndiag
+    role: head
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dcgm-mndiag
+      role: head
+  template:
+    metadata:
+      labels:
+        app: dcgm-mndiag
+        role: head
+    spec:
+      # hostNetwork：用节点网络，走节点间 SSH（与容器外免密一致）；head 固定到节点 1
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeName: l20-gpu-04
+      containers:
+        - name: dcgm-mndiag
+          image: dcgm-mndiag:latest   # 本地构建用此名即可；推送到仓库时改为完整地址
+          imagePullPolicy: Never     # 使用本地镜像时用 Never；从仓库拉取时改为 IfNotPresent
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              mkdir -p /root/.ssh
+              chmod 700 /root/.ssh
+              cp /mnt-ssh/id_rsa /root/.ssh/id_rsa
+              cp /mnt-ssh/id_rsa.pub /root/.ssh/id_rsa.pub
+              chmod 600 /root/.ssh/id_rsa /root/.ssh/id_rsa.pub
+              cat /mnt-ssh/id_rsa.pub >> /root/.ssh/authorized_keys 2>/dev/null || true
+              if [ ! -s /root/.ssh/authorized_keys ]; then
+                cp /mnt-ssh/id_rsa.pub /root/.ssh/authorized_keys
+              fi
+              chmod 600 /root/.ssh/authorized_keys
+              # worker 在另一节点，sshd 在 2222；用节点 IP 走主机网络（容器外免密已通）
+              echo -e "Host worker dcgm-worker\n  HostName ${NODE_WORKER_IP}\n  Port ${NODE_WORKER_SSH_PORT:-2222}\n  StrictHostKeyChecking accept-new" >> /root/.ssh/config
+              echo -e "Host dcgm-mndiag-head dcgm-mndiag-worker\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile /root/.ssh/known_hosts" >> /root/.ssh/config
+              chmod 600 /root/.ssh/config
+              ssh-keyscan -p ${NODE_WORKER_SSH_PORT:-2222} -H ${NODE_WORKER_IP} 2>/dev/null >> /root/.ssh/known_hosts || true
+              /usr/sbin/sshd
+              nv-hostengine -b 2>/dev/null || true
+              sleep 2
+              if [ "${RUN_MNDIAG}" = "true" ]; then
+                exec dcgmi mndiag --hostList "localhost;${NODE_WORKER_IP}" --hostEngineAddress localhost -j
+              else
+                echo "RUN_MNDIAG not true. 免密连 worker: ssh worker  或  ssh -p ${NODE_WORKER_SSH_PORT:-2222} ${NODE_WORKER_IP}"
+                exec sleep infinity
+              fi
+          env:
+            - name: DCGM_MNDIAG_MPIRUN_PATH
+              value: "/usr/bin/mpirun"
+            - name: RUN_MNDIAG
+              value: "false"
+            # worker 所在节点 IP（hostNetwork 下用节点间 SSH）
+            - name: NODE_WORKER_IP
+              value: "10.6.131.36"
+            - name: NODE_WORKER_SSH_PORT
+              value: "2222"
+          resources:
+            limits:
+              nvidia.com/gpu: "1"  # 按实际 GPU 数量调整
+          volumeMounts:
+            - name: ssh-keys
+              mountPath: /mnt-ssh
+              readOnly: true
+      volumes:
+        - name: ssh-keys
+          secret:
+            secretName: dcgm-mndiag-ssh
+            defaultMode: 0600

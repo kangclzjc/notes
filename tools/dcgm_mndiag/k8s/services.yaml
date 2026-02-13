@@ -1,0 +1,40 @@
+# Head 和 Worker 的 Service，供 --hostList 使用 DNS 名
+apiVersion: v1
+kind: Service
+metadata:
+  name: dcgm-mndiag-head
+  namespace: dcgm-mndiag
+  labels:
+    app: dcgm-mndiag
+    role: head
+spec:
+  selector:
+    app: dcgm-mndiag
+    role: head
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: 22
+    - name: dcgm
+      port: 5555
+      targetPort: 5555
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dcgm-mndiag-worker
+  namespace: dcgm-mndiag
+  labels:
+    app: dcgm-mndiag
+    role: worker
+spec:
+  selector:
+    app: dcgm-mndiag
+    role: worker
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: 22
+    - name: dcgm
+      port: 5555
+      targetPort: 5555

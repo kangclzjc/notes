@@ -1,0 +1,72 @@
+# 两节点 mndiag（同一台主机上两个容器，通过 compose 网络互通 + 免密 SSH）
+# 使用前：先运行 docker/scripts/setup-ssh-keys.sh 生成 ssh_keys
+# 启动：docker compose up -d worker && sleep 5 && docker compose up head
+# 查看 head 输出：docker compose logs -f head
+
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: dcgm-mndiag:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command:
+      - /bin/bash
+      - -c
+      - |
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh
+        cp /mnt-ssh/authorized_keys /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        /usr/sbin/sshd
+        exec nv-hostengine -f
+    volumes:
+      - ./ssh_keys:/mnt-ssh:ro
+    networks:
+      - mndiag
+    restart: unless-stopped
+
+  head:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: dcgm-mndiag:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh
+        cp /mnt-ssh/id_rsa /root/.ssh/id_rsa
+        cp /mnt-ssh/id_rsa.pub /root/.ssh/id_rsa.pub
+        chmod 600 /root/.ssh/id_rsa /root/.ssh/id_rsa.pub
+        cat /mnt-ssh/id_rsa.pub >> /root/.ssh/authorized_keys 2>/dev/null || true
+        [ -s /root/.ssh/authorized_keys ] || cp /mnt-ssh/id_rsa.pub /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        ssh-keyscan -H head worker 2>/dev/null >> /root/.ssh/known_hosts || true
+        /usr/sbin/sshd
+        nv-hostengine -b -f 2>/dev/null || true
+        sleep 3
+        exec dcgmi mndiag --hostList "head;worker" -j
+    volumes:
+      - ./ssh_keys:/mnt-ssh:ro
+    networks:
+      - mndiag
+    depends_on:
+      - worker
+
+networks:
+  mndiag:
+    driver: bridge

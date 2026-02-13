@@ -1,0 +1,58 @@
+# Worker 节点：运行 sshd 和 nv-hostengine，供 head 通过 SSH/MPI 调度任务
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dcgm-mndiag-worker
+  namespace: dcgm-mndiag
+  labels:
+    app: dcgm-mndiag
+    role: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dcgm-mndiag
+      role: worker
+  template:
+    metadata:
+      labels:
+        app: dcgm-mndiag
+        role: worker
+    spec:
+      # hostNetwork：用节点网络，走节点间 SSH（容器外免密已通）；worker 与 head 分两台节点
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeName: l20-gpu-05
+      containers:
+        - name: dcgm-mndiag
+          image: dcgm-mndiag:latest   # 本地构建用此名即可；推送到仓库时改为完整地址
+          imagePullPolicy: Never     # 使用本地镜像时用 Never；从仓库拉取时改为 IfNotPresent
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              mkdir -p /root/.ssh
+              chmod 700 /root/.ssh
+              cp /mnt-ssh/id_rsa.pub /root/.ssh/authorized_keys
+              chmod 600 /root/.ssh/authorized_keys
+              # 监听 2222 避免与节点本机 sshd(22) 冲突；head 通过节点 IP:2222 连过来
+              /usr/sbin/sshd -p 2222
+              nv-hostengine -b 2>/dev/null || true
+              exec sleep infinity
+          ports:
+            - containerPort: 2222
+              hostPort: 2222
+              name: ssh
+          resources:
+            limits:
+              nvidia.com/gpu: "1"  # 按实际 GPU 数量调整
+          volumeMounts:
+            - name: ssh-keys
+              mountPath: /mnt-ssh
+              readOnly: true
+      volumes:
+        - name: ssh-keys
+          secret:
+            secretName: dcgm-mndiag-ssh
+            defaultMode: 0644
