@@ -135,9 +135,11 @@ kubectl apply -f worker-deployment.yaml
 kubectl apply -f services.yaml
 ```
 
-## 4. hostNetwork 两节点部署（当前默认）
+## 4. 两节点部署（当前为 Pod 网络，无 hostNetwork）
 
-当前使用 **hostNetwork**：head 在 l20-gpu-04、worker 在 l20-gpu-05，走节点网络，复用节点间免密 SSH。Worker 的 sshd 在 **2222**，head 内用 `ssh worker` 或 `ssh -p 2222 10.6.131.36` 连 worker。若 worker 节点 IP 不同，改 head 的 env `NODE_WORKER_IP` 即可。
+当前 **未使用 hostNetwork**：head 在 l20-gpu-04、worker 在 l20-gpu-05，走 Pod 网络，通过 Service 名 `dcgm-mndiag-worker` 免密 SSH。在 head 里执行 `ssh dcgm-mndiag-worker hostname` / `ssh dcgm-mndiag-worker nvidia-smi` 即可。
+
+跨节点 Pod 互通依赖 Calico 已修复（见 [DEBUG-POD-NETWORK.md](DEBUG-POD-NETWORK.md)：为 calico-node 设置 `IP_AUTODETECTION_METHOD=cidr=10.6.131.0/24`）。若集群未做该修复且跨节点不通，可临时改用 hostNetwork 部署（见 git 历史或 DEBUG 文档）。
 
 ## 5. 固定到两台节点（可选）
 

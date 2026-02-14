@@ -19,9 +19,7 @@ spec:
         app: dcgm-mndiag
         role: worker
     spec:
-      # hostNetwork：用节点网络，走节点间 SSH（容器外免密已通）；worker 与 head 分两台节点
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      # Pod 网络；worker 固定到节点 2，与 head 分两台节点
       nodeName: l20-gpu-05
       containers:
         - name: dcgm-mndiag
@@ -36,14 +34,9 @@ spec:
               chmod 700 /root/.ssh
               cp /mnt-ssh/id_rsa.pub /root/.ssh/authorized_keys
               chmod 600 /root/.ssh/authorized_keys
-              # 监听 2222 避免与节点本机 sshd(22) 冲突；head 通过节点 IP:2222 连过来
-              /usr/sbin/sshd -p 2222
+              /usr/sbin/sshd
               nv-hostengine -b 2>/dev/null || true
               exec sleep infinity
-          ports:
-            - containerPort: 2222
-              hostPort: 2222
-              name: ssh
           resources:
             limits:
               nvidia.com/gpu: "1"  # 按实际 GPU 数量调整
